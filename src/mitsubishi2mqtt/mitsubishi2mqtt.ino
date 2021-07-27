@@ -161,7 +161,7 @@ void setup() {
       ha_debug_topic           = mqtt_topic + "/" + mqtt_fn + "/debug";
       ha_debug_set_topic       = mqtt_topic + "/" + mqtt_fn + "/debug/set";
       ha_custom_packet         = mqtt_topic + "/" + mqtt_fn + "/custom/send";
-
+      ha_availability_topic    = mqtt_topic + "/" + mqtt_fn + "/availability";
       if (others_haa) {
         ha_config_topic       = others_haa_topic + "/climate/" + mqtt_fn + "/config";
       }
@@ -269,22 +269,22 @@ void saveUnit(String tempUnit, String supportMode, String loginPassword, String 
   const size_t capacity = JSON_OBJECT_SIZE(6) + 200;
   DynamicJsonDocument doc(capacity);
   // if temp unit is empty, we use default celcius
-  if (tempUnit == '\0') tempUnit = "cel";
+  if (tempUnit.isEmpty()) tempUnit = "cel";
   doc["unit_tempUnit"]   = tempUnit;
   // if minTemp is empty, we use default 16
-  if (minTemp == '\0') minTemp = 16;
+  if (minTemp.isEmpty()) minTemp = 16;
   doc["min_temp"]   = minTemp;
   // if maxTemp is empty, we use default 31
-  if (maxTemp == '\0') maxTemp = 31;
+  if (maxTemp.isEmpty()) maxTemp = 31;
   doc["max_temp"]   = maxTemp;
   // if tempStep is empty, we use default 1
-  if (tempStep == '\0') tempStep = 1;
+  if (tempStep.isEmpty()) tempStep = 1;
   doc["temp_step"] = tempStep;
   // if support mode is empty, we use default all mode
-  if (supportMode == '\0') supportMode = "all";
+  if (supportMode.isEmpty()) supportMode = "all";
   doc["support_mode"]   = supportMode;
   // if login password is empty, we use empty
-  if (loginPassword == '\0') loginPassword = "";
+  if (loginPassword.isEmpty()) loginPassword = "";
   doc["login_password"]   = loginPassword;
   File configFile = SPIFFS.open(unit_conf, "w");
   if (!configFile) {
@@ -1367,6 +1367,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (modeUpper == "OFF") {
       hp.setPowerSetting("OFF");
       hp.update();
+        } else if (modeUpper == "ON") {
+      hp.setPowerSetting("ON");
+      hp.update();
     }
   }
   else if (strcmp(topic, ha_mode_set_topic.c_str()) == 0) {
@@ -1504,6 +1507,9 @@ void haConfig() {
   haConfig["mode_stat_tpl"]                 = F("{{ value_json.mode if (value_json is defined and value_json.mode is defined and value_json.mode|length) else 'off' }}"); //Set default value for fix "Could not parse data for HA"
   haConfig["temp_cmd_t"]                    = ha_temp_set_topic;
   haConfig["temp_stat_t"]                   = ha_state_topic;
+  haConfig["avty_t"]                        = ha_availability_topic; // MQTT last will (status) messages topic 
+  haConfig["pl_not_avail"]                  = mqtt_payload_unavailable; // MQTT offline message payload
+  haConfig["pl_avail"]                      = mqtt_payload_available; // MQTT online message payload
   //Set default value for fix "Could not parse data for HA"
   String temp_stat_tpl_str                  = F("{% if (value_json is defined and value_json.temperature is defined) %}{% if (value_json.temperature|int > ");
   temp_stat_tpl_str                        +=(String)convertCelsiusToLocalUnit(min_temp, useFahrenheit) + " and value_json.temperature|int < ";
@@ -1567,7 +1573,7 @@ void mqttConnect() {
   int attempts = 0;
   while (!mqtt_client.connected()) {
     // Attempt to connect
-    mqtt_client.connect(mqtt_client_id.c_str(), mqtt_username.c_str(), mqtt_password.c_str());
+    mqtt_client.connect(mqtt_client_id.c_str(), mqtt_username.c_str(), mqtt_password.c_str(), ha_availability_topic.c_str(), 1, true, mqtt_payload_unavailable);
     // If state < 0 (MQTT_CONNECTED) => network problem we retry 5 times and then waiting for MQTT_RETRY_INTERVAL_MS and retry reapeatly
     if (mqtt_client.state() < MQTT_CONNECTED) {
       if (attempts == 5) {
@@ -1594,6 +1600,7 @@ void mqttConnect() {
       mqtt_client.subscribe(ha_wideVane_set_topic.c_str());
       mqtt_client.subscribe(ha_remote_temp_set_topic.c_str());
       mqtt_client.subscribe(ha_custom_packet.c_str());
+      mqtt_client.publish(ha_availability_topic.c_str(), mqtt_payload_available, true); //publish status as available
       if (others_haa) {
         haConfig();
       }
